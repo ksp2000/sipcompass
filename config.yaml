@@ -1,0 +1,25 @@
+data_source:
+  # type: csv
+  # csv_path: data/120586_nav_20130102_20260109.csv
+  # --- Live fetch via Yahoo Finance (alternative to CSV) ---
+  type: yfinance
+  tickers:                  # List of Yahoo Finance tickers to analyze (one or more)
+    - "0P0000XW8F.BO"
+    - "0P0001BAYH.BO"
+    - "0P0000XWAT.BO"
+  # Legacy single-ticker form is still accepted and will be auto-promoted to a list:
+  # ticker: "0P0000XW8F.BO"
+
+sip:
+  monthly_amount: 5000
+  default_date: 5
+
+backtest:
+  start_date: "2023-02-01"
+  end_date: "2026-02-28"
+
+sip_optimization:
+  enabled: true
+  analyze_dates: []
+
+cert_path: "~/.config/cert/cacert.crt"

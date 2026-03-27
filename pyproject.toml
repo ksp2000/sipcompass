@@ -1,0 +1,17 @@
+[project]
+name = "mf-sip-date-finder"
+version = "0.1.0"
+description = "Brute-force SIP date optimizer for mutual funds"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+	"pandas>=2.2",
+	"numpy>=1.26",
+	"scipy>=1.11",
+	"PyYAML>=6.0",
+	"yfinance>=0.2",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
