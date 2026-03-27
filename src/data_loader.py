@@ -1,9 +1,12 @@
 """Minimal data loading for SIP date brute-force."""
 
 import os
+
 import pandas as pd
+import yaml
 
 CACHE_DIR = os.path.join("data", "cache")
+CACHE_META_PATH = os.path.join(CACHE_DIR, "nav_meta.yaml")
 
 
 def load_and_process_data(config: dict) -> pd.DataFrame:
@@ -72,24 +75,22 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
     # ------------------------------------------------------------------ #
     # 1. Load or seed the cache                                            #
     # ------------------------------------------------------------------ #
-    if os.path.exists(cache_path):
-        cached = pd.read_csv(cache_path, parse_dates=["Date"])
-        cached["Date"] = pd.to_datetime(cached["Date"]).dt.tz_localize(None)
-        cached_min: pd.Timestamp = cached["Date"].min()
-        cached_max: pd.Timestamp = cached["Date"].max()
-        print(
-            f"[{ticker}] Cache hit: {len(cached)} rows "
-            f"({cached_min.date()} -> {cached_max.date()})"
-        )
+    cache_meta = _read_cache_meta(CACHE_META_PATH, ticker)
+    if cache_meta is not None:
+        cached_min, cached_max = cache_meta
+        print(f"[{ticker}] Cache hit: ({cached_min.date()} -> {cached_max.date()})")
 
-        frames: list[pd.DataFrame] = [cached]
+        needs_update = False
+        frames_pre: list[pd.DataFrame] = []
+        frames_post: list[pd.DataFrame] = []
 
         # Gap before: requested start is earlier than what we have cached.
         if start_date and pd.Timestamp(start_date) < cached_min:
             gap_end = (cached_min - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
             print(f"[{ticker}] Fetching earlier gap: {start_date} -> {gap_end}")
             df_before = fetch_mf_data(ticker, start_date=start_date, end_date=gap_end)
-            frames.insert(0, df_before)
+            frames_pre.append(df_before)
+            needs_update = True
 
         # Gap after: cached data doesn't reach yesterday yet.
         if cached_max < cacheable_end:
@@ -109,25 +110,42 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
                         start_date=gap_start,
                         end_date=gap_end_ts.strftime("%Y-%m-%d"),
                     )
-                    frames.append(df_after)
+                    frames_post.append(df_after)
+                    needs_update = True
                 except ValueError:
                     print(
                         f"[{ticker}] No new data in gap {gap_start} -> "
                         f"{gap_end_ts.strftime('%Y-%m-%d')}; using cached data."
                     )
 
-        merged = (
-            pd.concat(frames, ignore_index=True)
-            .drop_duplicates(subset=["Date"])
-            .sort_values("Date")
-            .reset_index(drop=True)
-        )
-
-        # Persist only cacheable rows (strictly before today).
-        _save_cache(merged[merged["Date"] < today], cache_path)
+        if needs_update:
+            # Load CSV only when we actually need to merge new data into it.
+            cached = pd.read_csv(cache_path, parse_dates=["Date"])
+            cached["Date"] = pd.to_datetime(cached["Date"]).dt.tz_localize(None)
+            all_frames = frames_pre + [cached] + frames_post
+            merged = (
+                pd.concat(all_frames, ignore_index=True)
+                .drop_duplicates(subset=["Date"])
+                .sort_values("Date")
+                .reset_index(drop=True)
+            )
+            # Persist only cacheable rows (strictly before today).
+            cacheable = merged[merged["Date"] < today].copy()
+            _save_cache(cacheable, cache_path)
+            _write_cache_meta(
+                CACHE_META_PATH,
+                ticker,
+                cacheable["Date"].min(),
+                cacheable["Date"].max(),
+            )
+        else:
+            # No gaps — load CSV directly for the return value.
+            merged = pd.read_csv(cache_path, parse_dates=["Date"])
+            merged["Date"] = pd.to_datetime(merged["Date"]).dt.tz_localize(None)
 
     else:
-        # No cache yet — fetch everything up to yesterday and seed the file.
+        # No cache meta (treat as cache miss) — fetch everything up to yesterday
+        # and seed the cache files.
         cacheable_end_str = cacheable_end.strftime("%Y-%m-%d")
         fetch_start = start_date or None
         print(
@@ -138,6 +156,9 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
         )
         os.makedirs(CACHE_DIR, exist_ok=True)
         _save_cache(merged, cache_path)
+        _write_cache_meta(
+            CACHE_META_PATH, ticker, merged["Date"].min(), merged["Date"].max()
+        )
 
     # ------------------------------------------------------------------ #
     # 2. Fetch today live if the requested range includes today            #
@@ -162,6 +183,62 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
 
     # Slice to exactly the requested window and return.
     return filter_by_date_range(merged, start_date or None, end_date or None)
+
+
+def _read_cache_meta(
+    meta_path: str, ticker: str
+) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """Read a ticker's cached date-range from the shared metadata YAML file.
+
+    Args:
+        meta_path: Path to the shared YAML metadata file (``nav_meta.yaml``).
+        ticker: Ticker symbol whose entry to look up.
+
+    Returns:
+        Tuple of (min_date, max_date) as pd.Timestamp, or None if the file
+        does not exist, the ticker has no entry, or the entry cannot be parsed.
+    """
+    if not os.path.exists(meta_path):
+        return None
+    try:
+        with open(meta_path, "r") as fh:
+            all_meta = yaml.safe_load(fh) or {}
+        entry = all_meta.get(ticker)
+        if not entry:
+            return None
+        min_date = pd.Timestamp(entry["min_date"])
+        max_date = pd.Timestamp(entry["max_date"])
+        return min_date, max_date
+    except Exception:
+        return None
+
+
+def _write_cache_meta(
+    meta_path: str, ticker: str, min_date: pd.Timestamp, max_date: pd.Timestamp
+) -> None:
+    """Update a ticker's date-range entry in the shared metadata YAML file.
+
+    Reads the existing file (if any), updates only the entry for ``ticker``,
+    and writes the file back.
+
+    Args:
+        meta_path: Path to the shared YAML metadata file (``nav_meta.yaml``).
+        ticker: Ticker symbol whose entry to create or update.
+        min_date: Earliest date present in the ticker's cache CSV.
+        max_date: Latest date present in the ticker's cache CSV.
+    """
+    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+    if os.path.exists(meta_path):
+        with open(meta_path, "r") as fh:
+            all_meta = yaml.safe_load(fh) or {}
+    else:
+        all_meta = {}
+    all_meta[ticker] = {
+        "min_date": min_date.strftime("%Y-%m-%d"),
+        "max_date": max_date.strftime("%Y-%m-%d"),
+    }
+    with open(meta_path, "w") as fh:
+        yaml.dump(all_meta, fh, default_flow_style=False)
 
 
 def _save_cache(df: pd.DataFrame, path: str) -> None:

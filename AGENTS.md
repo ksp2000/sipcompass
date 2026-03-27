@@ -180,10 +180,11 @@ def fetch_mf_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
 config.yaml
     └─► validate_config()
     └─► load_and_process_data()  (per ticker)
-            ├─ cache hit?  ──► load from data/cache/{ticker}_nav.csv
-            │                  fetch only missing gaps (before/after cached range)
-            │                  update cache with new rows
+            ├─ cache hit?  ──► read data/cache/{ticker}_nav_meta.yaml (min/max dates only)
+            │                  compute gaps; load CSV only if gaps need merging
+            │                  update CSV + meta YAML with new rows
             └─ cache miss? ──► fetch_mf_data() ──► seed data/cache/{ticker}_nav.csv
+            │                                       + data/cache/{ticker}_nav_meta.yaml
             └─ end_date >= today? ──► fetch today live (not cached)
     └─► filter_by_date_range()
     └─► optimize_sip_dates()
@@ -202,6 +203,7 @@ config.yaml
 | File pattern | Description |
 |---|---|
 | `data/cache/<ticker>_nav.csv` | Incremental NAV cache for a ticker; rows before today only |
+| `data/cache/nav_meta.yaml` | Single shared metadata file storing `min_date` and `max_date` per ticker; read on every run to avoid loading any CSV for cache range checks |
 
 `data/output/` — analysis outputs (git-ignored):
 
