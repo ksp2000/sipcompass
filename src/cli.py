@@ -7,7 +7,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from src.data_loader import filter_by_date_range, load_and_process_data, validate_config
+from src.data_loader import filter_by_date_range, get_ticker_name, load_and_process_data, validate_config
 from src.optimizer import optimize_sip_dates
 
 console = Console()
@@ -99,15 +99,16 @@ def save_outputs(results: dict, ticker: str, config: dict) -> None:
 
     results_path = os.path.join(out_dir, f"{stem}_sip_results.csv")
     pd.DataFrame(results["per_date"]).to_csv(results_path, index=False)
-    console.print(f"[green]✓[/green] SIP results written to [dim]{results_path}[/dim]")
+    console.print(f"[green]OK[/green] SIP results written to [dim]{results_path}[/dim]")
 
 
-def print_top_dates(results: dict, ticker: str = "") -> None:
+def print_top_dates(results: dict, ticker: str = "", name: str = "") -> None:
     """Print per-ticker SIP optimization results with the configured top dates."""
     averages = results["averages"]
+    display = f"{ticker} — {name}" if name and name != ticker else ticker
     title = (
-        f"SIP DATE OPTIMIZATION RESULTS — {ticker}"
-        if ticker
+        f"SIP DATE OPTIMIZATION RESULTS — {display}"
+        if display
         else "SIP DATE OPTIMIZATION RESULTS"
     )
     console.rule(f"[bold cyan]{title}[/bold cyan]")
@@ -148,6 +149,7 @@ def print_summary_table(all_ticker_results: list[dict]) -> None:
     console.rule("[bold cyan]SUMMARY — BEST SIP DATE PER TICKER[/bold cyan]")
     table = Table(show_header=True, header_style="bold magenta", show_lines=False)
     table.add_column("Ticker", style="bold")
+    table.add_column("Fund Name")
     table.add_column("Best Date", justify="right")
     table.add_column("Best Return %", justify="right")
     table.add_column("Best XIRR %", justify="right")
@@ -158,6 +160,7 @@ def print_summary_table(all_ticker_results: list[dict]) -> None:
         avg_xirr = entry["results"]["averages"]["xirr"]
         table.add_row(
             entry["ticker"],
+            entry.get("name", ""),
             str(best["sip_date"]),
             f"{best['return_pct']:.2f}%",
             f"[bold]{best['xirr']:.2f}%[/bold]",
@@ -207,9 +210,10 @@ def main() -> None:
         df = ticker_dfs[ticker]
 
         results = optimize_sip_dates(df, ticker_config)
-        print_top_dates(results, ticker=ticker)
+        ticker_name = get_ticker_name(ticker)
+        print_top_dates(results, ticker=ticker, name=ticker_name)
         save_outputs(results, ticker, config)
 
-        all_ticker_results.append({"ticker": ticker, "results": results})
+        all_ticker_results.append({"ticker": ticker, "name": ticker_name, "results": results})
 
     print_summary_table(all_ticker_results)

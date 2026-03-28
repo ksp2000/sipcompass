@@ -3,6 +3,7 @@
 import os
 
 import pandas as pd
+import yfinance as yf
 import yaml
 
 CACHE_DIR = os.path.join("data", "cache")
@@ -77,7 +78,7 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
     # ------------------------------------------------------------------ #
     cache_meta = _read_cache_meta(CACHE_META_PATH, ticker)
     if cache_meta is not None:
-        cached_min, cached_max = cache_meta
+        cached_min, cached_max, cached_name = cache_meta
         print(f"[{ticker}] Cache hit: ({cached_min.date()} -> {cached_max.date()})")
 
         needs_update = False
@@ -132,16 +133,32 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
             # Persist only cacheable rows (strictly before today).
             cacheable = merged[merged["Date"] < today].copy()
             _save_cache(cacheable, cache_path)
+            # Fetch name if not yet stored.
+            if cached_name is None:
+                cached_name = _fetch_ticker_name(ticker)
+                print(f"[{ticker}] Fund name: {cached_name}")
             _write_cache_meta(
                 CACHE_META_PATH,
                 ticker,
                 cacheable["Date"].min(),
                 cacheable["Date"].max(),
+                name=cached_name,
             )
         else:
             # No gaps — load CSV directly for the return value.
             merged = pd.read_csv(cache_path, parse_dates=["Date"])
             merged["Date"] = pd.to_datetime(merged["Date"]).dt.tz_localize(None)
+            # Fetch and store name if missing from metadata.
+            if cached_name is None:
+                cached_name = _fetch_ticker_name(ticker)
+                print(f"[{ticker}] Fund name: {cached_name}")
+                _write_cache_meta(
+                    CACHE_META_PATH,
+                    ticker,
+                    cached_min,
+                    cached_max,
+                    name=cached_name,
+                )
 
     else:
         # No cache meta (treat as cache miss) — fetch everything up to yesterday
@@ -156,8 +173,11 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
         )
         os.makedirs(CACHE_DIR, exist_ok=True)
         _save_cache(merged, cache_path)
+        seed_name = _fetch_ticker_name(ticker)
+        print(f"[{ticker}] Fund name: {seed_name}")
         _write_cache_meta(
-            CACHE_META_PATH, ticker, merged["Date"].min(), merged["Date"].max()
+            CACHE_META_PATH, ticker, merged["Date"].min(), merged["Date"].max(),
+            name=seed_name,
         )
 
     # ------------------------------------------------------------------ #
@@ -208,24 +228,32 @@ def _read_cache_meta(
             return None
         min_date = pd.Timestamp(entry["min_date"])
         max_date = pd.Timestamp(entry["max_date"])
-        return min_date, max_date
+        name: str | None = entry.get("name") or None
+        return min_date, max_date, name
     except Exception:
         return None
 
 
 def _write_cache_meta(
-    meta_path: str, ticker: str, min_date: pd.Timestamp, max_date: pd.Timestamp
+    meta_path: str,
+    ticker: str,
+    min_date: pd.Timestamp,
+    max_date: pd.Timestamp,
+    name: str | None = None,
 ) -> None:
     """Update a ticker's date-range entry in the shared metadata YAML file.
 
     Reads the existing file (if any), updates only the entry for ``ticker``,
-    and writes the file back.
+    and writes the file back. If ``name`` is None, any previously stored name
+    is preserved.
 
     Args:
         meta_path: Path to the shared YAML metadata file (``nav_meta.yaml``).
         ticker: Ticker symbol whose entry to create or update.
         min_date: Earliest date present in the ticker's cache CSV.
         max_date: Latest date present in the ticker's cache CSV.
+        name: Human-readable fund/ETF name to cache alongside the dates. When
+            None, the existing stored name (if any) is kept unchanged.
     """
     os.makedirs(os.path.dirname(meta_path), exist_ok=True)
     if os.path.exists(meta_path):
@@ -233,12 +261,49 @@ def _write_cache_meta(
             all_meta = yaml.safe_load(fh) or {}
     else:
         all_meta = {}
-    all_meta[ticker] = {
+    existing_entry: dict = all_meta.get(ticker) or {}
+    new_entry: dict = {
         "min_date": min_date.strftime("%Y-%m-%d"),
         "max_date": max_date.strftime("%Y-%m-%d"),
+        "name": name if name is not None else existing_entry.get("name"),
     }
+    all_meta[ticker] = new_entry
     with open(meta_path, "w") as fh:
         yaml.dump(all_meta, fh, default_flow_style=False)
+
+
+def _fetch_ticker_name(ticker: str) -> str:
+    """Fetch the human-readable fund/ETF name from Yahoo Finance.
+
+    Args:
+        ticker: Yahoo Finance ticker symbol.
+
+    Returns:
+        The ``longName`` or ``shortName`` from yfinance info, or the ticker
+        symbol itself when the info call fails or the fields are absent.
+    """
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("longName") or info.get("shortName") or ticker
+    except Exception:
+        return ticker
+
+
+def get_ticker_name(ticker: str) -> str:
+    """Return the cached human-readable name for a ticker from nav_meta.yaml.
+
+    Args:
+        ticker: Yahoo Finance ticker symbol.
+
+    Returns:
+        The stored fund/ETF name, or the ticker symbol itself if not found.
+    """
+    result = _read_cache_meta(CACHE_META_PATH, ticker)
+    if result is not None:
+        _min, _max, name = result
+        if name:
+            return name
+    return ticker
 
 
 def _save_cache(df: pd.DataFrame, path: str) -> None:
