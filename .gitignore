@@ -9,5 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
-# Data
-data/*
+# Generated data
+data/cache/
+data/output/
+
+# Tooling caches
+.ruff_cache/

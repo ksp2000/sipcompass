@@ -1,146 +1,197 @@
-# MF SIP Date Finder
+# SIPCompass
 
-Find the optimal SIP (Systematic Investment Plan) date for mutual funds by analyzing historical NAV data and calculating XIRR for different investment dates.
+SIPCompass is a Python CLI that backtests monthly SIP dates for mutual funds and ETFs, ranks them by XIRR, and helps you compare how different dates of the month would have performed historically.
 
-## What it does
+## Why use it?
 
-This tool helps you determine which date of the month (1-28) would give you the best returns for your SIP investments. It:
+If you invest monthly, SIPCompass helps answer questions like:
 
-1. Loads historical NAV (Net Asset Value) data from a CSV file
-2. Simulates SIP investments for each possible date (1-28)
-3. Calculates XIRR (Extended Internal Rate of Return) for each date
-4. Ranks dates by XIRR and absolute returns
-5. Shows you the top 3 dates with performance comparisons
+- Does the 5th of the month perform better than the 15th?
+- Which date historically produced the best XIRR?
+- How far is the best date from the average across all possible SIP dates?
 
-## Quick Start
+It is meant to be a practical backtesting tool — not a crystal ball in a blazer.
 
-### 1. Choose a data source
+## Features
 
-**Option A — Local CSV file** (default)
+- Backtests SIP dates from `1` to `28`
+- Supports both local CSV data and live Yahoo Finance tickers
+- Ranks results by XIRR, then by absolute return %
+- Rich terminal output with readable tables
+- Incremental cache for Yahoo Finance data
+- CSV export of ranked results
+- Configurable `top_n` results display
+- CLI overrides for quick experimentation
 
-Place your NAV CSV file in the `data/` folder. The CSV must contain at minimum:
-- `Date` column (format: YYYY-MM-DD)
-- `Close` column (NAV value) or `Price` column
+## Quick start
 
-```csv
-Date,Close
-2013-01-02,10.50
-2013-01-03,10.52
-...
-```
+### Prerequisites
 
-**Option B — Live data via Yahoo Finance**
+- Python `3.11+`
+- [`uv`](https://github.com/astral-sh/uv)
 
-No local file needed. Supply a valid [Yahoo Finance](https://finance.yahoo.com) ticker symbol.  
-For Indian mutual funds traded on BSE/NSE look up the ticker on Yahoo Finance  
-(e.g. `0P0001ANWB.BO` for an Indian MF; `NIFTYBEES.NS` for an NSE ETF).
+### Install
 
-### 2. Configure
-Edit `config.yaml`:
-
-**CSV mode (default):**
-```yaml
-data_source:
-  type: csv
-  csv_path: data/your_nav_file.csv
-
-sip:
-  monthly_amount: 3000  # Your SIP amount
-
-backtest:
-  start_date: "2013-01-02"
-  end_date: "2026-01-09"
-
-sip_optimization:
-  enabled: true
-  analyze_dates: []  # Leave empty to test all dates 1-28
-```
-
-**Yahoo Finance live-fetch mode:**
-```yaml
-data_source:
-  type: yfinance
-  ticker: "0P0001ANWB.BO"  # Yahoo Finance ticker
-
-sip:
-  monthly_amount: 3000
-
-backtest:
-  start_date: "2013-01-02"
-  end_date: "2026-01-09"
-
-sip_optimization:
-  enabled: true
-  analyze_dates: []
-```
-
-### 3. Run
-```bash
-python main.py
-```
-
-Or with uv:
-```bash
-uv run main.py
-```
-
-## Output
-
-The tool will show:
-- Average return % and XIRR % across all dates
-- Top 3 dates ranked by XIRR
-- Performance difference compared to average
-
-Example output:
-```
-======================================================================
-SIP DATE OPTIMIZATION RESULTS
-======================================================================
-
-Average across all dates:
-  Return: 206.28%
-  XIRR:   16.01%
-
-Top 3 SIP dates (ranked by XIRR, then return %):
-----------------------------------------------------------------------
-Date |  Return% |   XIRR% |  vs Avg Return |  vs Avg XIRR
-----------------------------------------------------------------------
-  24 |   206.49 |   16.05 |          +0.21 |        +0.04
-  25 |   206.28 |   16.05 |          -0.00 |        +0.04
-  26 |   206.16 |   16.05 |          -0.12 |        +0.04
-======================================================================
-```
-
-## Dependencies
-
-- pandas
-- scipy
-- pyyaml
-- yfinance (for live-fetch mode)
-
-Install via:
-```bash
-pip install pandas scipy pyyaml yfinance
-```
-
-Or with uv:
 ```bash
 uv sync
 ```
 
-## How it works
+### Create your config
 
-For each date (1-28):
-1. Simulate monthly SIP investments on that date
-2. Track all cash flows (investments and final portfolio value)
-3. Calculate XIRR using the cash flow dates
-4. Calculate absolute returns
+Copy the example config:
 
-The best date is the one that gives the highest annualized return (XIRR).
+```bash
+cp config.example.yaml config.yaml
+```
 
-## Notes
+On Windows PowerShell:
 
-- The tool tests dates 1-28 to avoid month-end complications
-- XIRR accounts for the time value of money unlike simple returns
-- Past performance doesn't guarantee future results
-- Use this as one input among many for your investment decisions
+```powershell
+Copy-Item config.example.yaml config.yaml
+```
+
+Then edit `config.yaml`.
+
+### Run
+
+```bash
+uv run sipcompass --config config.yaml
+```
+
+## Example config
+
+### Yahoo Finance mode
+
+```yaml
+data_source:
+  type: yfinance
+  tickers:
+    - "0P0001ANWB.BO"
+    - "NIFTYBEES.NS"
+
+sip:
+  monthly_amount: 5000
+  default_date: 5
+
+backtest:
+  start_date: "2021-01-01"
+  end_date: "2026-03-28"
+
+sip_optimization:
+  enabled: true
+  analyze_dates: []
+  top_n: 5
+```
+
+### CSV mode
+
+```yaml
+data_source:
+  type: csv
+  csv_path: data/sample_nav.csv
+
+sip:
+  monthly_amount: 5000
+  default_date: 5
+
+backtest:
+  start_date: "2021-01-01"
+  end_date: "2026-03-28"
+
+sip_optimization:
+  enabled: true
+  analyze_dates: []
+  top_n: 5
+```
+
+Your CSV must include:
+
+- `Date` in `YYYY-MM-DD` format
+- `Close` or `Price`
+
+Example:
+
+```csv
+Date,Close
+2024-01-02,10.50
+2024-01-03,10.52
+2024-01-04,10.61
+```
+
+## Common CLI overrides
+
+You can override config values without editing the YAML file each time:
+
+```bash
+uv run sipcompass --config config.yaml --top-n 7
+uv run sipcompass --config config.yaml --start-date 2022-01-01 --end-date 2026-03-28
+uv run sipcompass --config config.yaml --ticker NIFTYBEES.NS --ticker GOLDBEES.NS
+uv run sipcompass --config config.yaml --amount 10000
+```
+
+## Output
+
+SIPCompass prints:
+
+- average return % and XIRR % across all analyzed dates
+- the top `N` SIP dates ranked by XIRR and return %
+- one-row-per-ticker summary when multiple tickers are analyzed
+- a CSV file in `data/output/` with all ranked results
+
+## How ranking works
+
+For each SIP date from `1` to `28`, SIPCompass:
+
+1. simulates investing once per month on the first trading day on or after that date
+2. tracks cash outflows and final portfolio value
+3. calculates XIRR for the resulting cash flows
+4. ranks dates by:
+   - highest XIRR first
+   - highest return % second
+
+The tool avoids dates `29`–`31` to keep the comparison consistent across months.
+
+## Finding ticker symbols
+
+For live mode, use Yahoo Finance ticker symbols.
+
+Examples:
+
+- Indian mutual fund on BSE: `0P0001ANWB.BO`
+- NSE ETF: `NIFTYBEES.NS`
+
+Search on [Yahoo Finance](https://finance.yahoo.com/) and copy the symbol exactly.
+
+## Project structure
+
+- `main.py` — CLI entry point
+- `src/data_loader.py` — CSV/Yahoo data loading and cache handling
+- `src/backtest.py` — SIP simulation logic
+- `src/finance.py` — XIRR calculation
+- `src/optimizer.py` — ranking and summary generation
+
+## Notes and caveats
+
+- This tool is for historical analysis only.
+- Past performance does **not** guarantee future returns.
+- Yahoo Finance data availability can vary by symbol and market.
+- XIRR failures currently fall back to `0.0%`.
+- Use this as a research aid, not as investment advice.
+
+## Development
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Run tests:
+
+```bash
+uv run pytest
+```
+
+## License
+
+MIT

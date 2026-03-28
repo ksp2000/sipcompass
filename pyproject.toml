@@ -1,9 +1,25 @@
 [project]
-name = "mf-sip-date-finder"
+name = "sipcompass"
 version = "0.1.0"
-description = "Brute-force SIP date optimizer for mutual funds"
+description = "Backtest and compare the best monthly SIP dates for mutual funds and ETFs"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+authors = [
+	{ name = "Sai Praneeth Konda" },
+]
+keywords = ["sip", "mutual-funds", "backtesting", "xirr", "finance", "cli"]
+classifiers = [
+	"Development Status :: 4 - Beta",
+	"Intended Audience :: Financial and Insurance Industry",
+	"Intended Audience :: End Users/Desktop",
+	"Operating System :: OS Independent",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.11",
+	"Programming Language :: Python :: 3.12",
+	"Topic :: Office/Business :: Financial :: Investment",
+	"Environment :: Console",
+]
 dependencies = [
 	"pandas>=2.2",
 	"numpy>=1.26",
@@ -13,6 +29,22 @@ dependencies = [
 	"rich>=14.3.3",
 ]
 
+[project.urls]
+Homepage = "https://github.com/saipraneethkonda/sipcompass"
+Repository = "https://github.com/saipraneethkonda/sipcompass"
+Issues = "https://github.com/saipraneethkonda/sipcompass/issues"
+
+[project.scripts]
+sipcompass = "src.cli:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

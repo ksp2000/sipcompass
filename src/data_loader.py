@@ -298,6 +298,10 @@ def filter_by_date_range(
 
 def validate_config(config: dict) -> dict:
     """Validate SIP configuration."""
+    if not isinstance(config, dict):
+        raise ValueError("Configuration file must contain a YAML object at the top level")
+
+    config.setdefault("sip", {})
     sip_date = int(config.get("sip", {}).get("default_date", 1))
     if sip_date < 1 or sip_date > 28:
         raise ValueError("sip.default_date must be between 1 and 28 (inclusive)")
@@ -329,5 +333,11 @@ def validate_config(config: dict) -> dict:
             f"Unknown data_source.type '{source_type}'. "
             "Supported values: 'csv', 'yfinance'."
         )
+
+    sip_optimization = config.setdefault("sip_optimization", {})
+    top_n = int(sip_optimization.get("top_n", 3))
+    if top_n < 1:
+        raise ValueError("sip_optimization.top_n must be at least 1")
+    sip_optimization["top_n"] = top_n
 
     return config
