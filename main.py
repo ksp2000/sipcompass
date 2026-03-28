@@ -1,10 +1,15 @@
 import argparse
 import os
+
 import pandas as pd
 import yaml
+from rich.console import Console
+from rich.table import Table
 
 from src.data_loader import load_and_process_data, filter_by_date_range, validate_config
 from src.optimizer import optimize_sip_dates
+
+console = Console()
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,40 +44,45 @@ def save_outputs(results: dict, ticker: str, config: dict) -> None:
 
     results_path = os.path.join(out_dir, f"{stem}_sip_results.csv")
     pd.DataFrame(results["per_date"]).to_csv(results_path, index=False)
-    print(f"SIP results written to {results_path}")
+    console.print(f"[green]✓[/green] SIP results written to [dim]{results_path}[/dim]")
 
 
 def print_top_dates(results: dict, ticker: str = "") -> None:
     """Print per-ticker SIP optimization results with top-3 dates."""
     averages = results["averages"]
     title = (
-        f"SIP DATE OPTIMIZATION RESULTS -- {ticker}"
+        f"SIP DATE OPTIMIZATION RESULTS — {ticker}"
         if ticker
         else "SIP DATE OPTIMIZATION RESULTS"
     )
-    print("\n" + "=" * 70)
-    print(title)
-    print("=" * 70)
-    print("\nAverage across all dates:")
-    print(f"  Return: {averages['return_pct']:.2f}%")
-    print(f"  XIRR:   {averages['xirr']:.2f}%")
-    print("\nTop 3 SIP dates (ranked by XIRR, then return %):")
-    print("-" * 70)
-    print(
-        f"{'Date':>4} | {'Return%':>8} | {'XIRR%':>7} | {'vs Avg Return':>14} | {'vs Avg XIRR':>12}"
-    )
-    print("-" * 70)
+    console.rule(f"[bold cyan]{title}[/bold cyan]")
+
+    console.print("[bold]Averages across all dates:[/bold]")
+    console.print(f"  Return: [yellow]{averages['return_pct']:.2f}%[/yellow]")
+    console.print(f"  XIRR:   [yellow]{averages['xirr']:.2f}%[/yellow]")
+
+    top_n = results.get("top_n", len(results["top_three"]))
+    console.print(f"\n[bold]Top {top_n} SIP dates[/bold] [dim](ranked by XIRR, then return %)[/dim]")
+    table = Table(show_header=True, header_style="bold magenta", show_lines=False)
+    table.add_column("SIP Date", justify="right", style="bold")
+    table.add_column("Return %", justify="right")
+    table.add_column("XIRR %", justify="right")
+    table.add_column("vs Avg Return", justify="right")
+    table.add_column("vs Avg XIRR", justify="right")
+
     for entry in results["top_three"]:
-        print(
-            "{:>4} | {:>8.2f} | {:>7.2f} | {:>+14.2f} | {:>+12.2f}".format(
-                entry["sip_date"],
-                entry["return_pct"],
-                entry["xirr"],
-                entry["delta_vs_avg_return"],
-                entry["delta_vs_avg_xirr"],
-            )
+        delta_return = entry["delta_vs_avg_return"]
+        delta_xirr = entry["delta_vs_avg_xirr"]
+        dr_style = "green" if delta_return >= 0 else "red"
+        dx_style = "green" if delta_xirr >= 0 else "red"
+        table.add_row(
+            str(entry["sip_date"]),
+            f"{entry['return_pct']:.2f}%",
+            f"[bold]{entry['xirr']:.2f}%[/bold]",
+            f"[{dr_style}]{delta_return:+.2f}%[/{dr_style}]",
+            f"[{dx_style}]{delta_xirr:+.2f}%[/{dx_style}]",
         )
-    print("=" * 70)
+    console.print(table)
 
 
 def print_summary_table(all_ticker_results: list[dict]) -> None:
@@ -87,26 +97,25 @@ def print_summary_table(all_ticker_results: list[dict]) -> None:
     if len(all_ticker_results) < 2:
         return
 
-    print("\n" + "=" * 70)
-    print("SUMMARY -- BEST SIP DATE PER TICKER")
-    print("=" * 70)
-    print(
-        f"{'Ticker':<22} | {'Best Date':>9} | {'Best Return%':>12} | {'Best XIRR%':>10} | {'Avg XIRR%':>9}"
-    )
-    print("-" * 70)
+    console.rule("[bold cyan]SUMMARY — BEST SIP DATE PER TICKER[/bold cyan]")
+    table = Table(show_header=True, header_style="bold magenta", show_lines=False)
+    table.add_column("Ticker", style="bold")
+    table.add_column("Best Date", justify="right")
+    table.add_column("Best Return %", justify="right")
+    table.add_column("Best XIRR %", justify="right")
+    table.add_column("Avg XIRR %", justify="right")
+
     for entry in all_ticker_results:
         best = entry["results"]["top_three"][0]
         avg_xirr = entry["results"]["averages"]["xirr"]
-        print(
-            "{:<22} | {:>9} | {:>12.2f} | {:>10.2f} | {:>9.2f}".format(
-                entry["ticker"],
-                best["sip_date"],
-                best["return_pct"],
-                best["xirr"],
-                avg_xirr,
-            )
+        table.add_row(
+            entry["ticker"],
+            str(best["sip_date"]),
+            f"{best['return_pct']:.2f}%",
+            f"[bold]{best['xirr']:.2f}%[/bold]",
+            f"{avg_xirr:.2f}%",
         )
-    print("=" * 70)
+    console.print(table)
 
 
 def main() -> None:
@@ -133,7 +142,7 @@ def main() -> None:
     all_ticker_results: list[dict] = []
 
     # --- Stage 1: fetch / cache NAV data for all tickers ---
-    print("\n=== Fetching NAV data ===")
+    console.rule("[bold blue]Fetching NAV data[/bold blue]")
     ticker_dfs: dict[str, pd.DataFrame] = {}
     for ticker in tickers:
         ticker_config = {**config, "data_source": {**data_source, "ticker": ticker}}
@@ -144,9 +153,9 @@ def main() -> None:
         ticker_dfs[ticker] = df
 
     # --- Stage 2: run SIP optimization for each ticker ---
-    print("\n=== Running SIP optimization ===")
+    console.rule("[bold blue]Running SIP optimization[/bold blue]")
     for ticker in tickers:
-        print(f"\n--- Processing: {ticker} ---")
+        console.print(f"\n[bold cyan]Processing:[/bold cyan] {ticker}")
         ticker_config = {**config, "data_source": {**data_source, "ticker": ticker}}
         df = ticker_dfs[ticker]
 

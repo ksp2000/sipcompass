@@ -26,7 +26,8 @@ def optimize_sip_dates(df, config) -> dict:
         r['delta_vs_avg_return'] = round(r['return_pct'] - avg_return, 2)
         r['delta_vs_avg_xirr'] = round(r['xirr'] - avg_xirr, 2)
 
-    top_three = ranked[:3]
+    top_n = int(sip_cfg.get('top_n', 3))
+    top_three = ranked[:top_n]
 
     return {
         'averages': {
@@ -35,4 +36,5 @@ def optimize_sip_dates(df, config) -> dict:
         },
         'per_date': ranked,
         'top_three': top_three,
+        'top_n': top_n,
     }
