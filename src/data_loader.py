@@ -310,12 +310,15 @@ def _fetch_ticker_name(ticker: str) -> tuple[str, str | None]:
         Tuple of (name, inception_date) where name is the ``longName`` or
         ``shortName`` from yfinance info (falling back to the ticker symbol),
         and inception_date is an ISO date string (YYYY-MM-DD) derived from the
-        ``inceptionDate`` Unix timestamp field, or None when absent.
+        ``inceptionDate`` (ETFs/stocks) or ``fundInceptionDate`` (mutual funds)
+        Unix timestamp field, or None when absent.
     """
     try:
         info = yf.Ticker(ticker).info
         name: str = info.get("longName") or info.get("shortName") or ticker
-        raw_inception = info.get("inceptionDate")
+        # Yahoo Finance uses "inceptionDate" for ETFs/stocks and
+        # "fundInceptionDate" for mutual funds; try both.
+        raw_inception = info.get("inceptionDate") or info.get("fundInceptionDate")
         inception_date: str | None = None
         if raw_inception is not None:
             inception_date = datetime.fromtimestamp(
