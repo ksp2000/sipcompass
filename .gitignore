@@ -15,3 +15,6 @@ data/output/
 
 # Tooling caches
 .ruff_cache/
+
+# Config files
+config.yaml

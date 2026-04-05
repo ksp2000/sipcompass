@@ -1,6 +1,7 @@
 """Minimal data loading for SIP date brute-force."""
 
 import os
+from datetime import datetime, timezone
 
 import pandas as pd
 import yfinance as yf
@@ -78,7 +79,7 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
     # ------------------------------------------------------------------ #
     cache_meta = _read_cache_meta(CACHE_META_PATH, ticker)
     if cache_meta is not None:
-        cached_min, cached_max, cached_name = cache_meta
+        cached_min, cached_max, cached_name, cached_inception = cache_meta
         print(f"[{ticker}] Cache hit: ({cached_min.date()} -> {cached_max.date()})")
 
         needs_update = False
@@ -133,38 +134,57 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
             # Persist only cacheable rows (strictly before today).
             cacheable = merged[merged["Date"] < today].copy()
             _save_cache(cacheable, cache_path)
-            # Fetch name if not yet stored.
-            if cached_name is None:
-                cached_name = _fetch_ticker_name(ticker)
-                print(f"[{ticker}] Fund name: {cached_name}")
+            # Fetch name/inception if not yet stored.
+            if cached_name is None or cached_inception is None:
+                fetched_name, fetched_inception = _fetch_ticker_name(ticker)
+                if cached_name is None:
+                    cached_name = fetched_name
+                    print(f"[{ticker}] Fund name: {cached_name}")
+                if cached_inception is None:
+                    cached_inception = fetched_inception
+                    if cached_inception:
+                        print(f"[{ticker}] Inception date: {cached_inception}")
             _write_cache_meta(
                 CACHE_META_PATH,
                 ticker,
                 cacheable["Date"].min(),
                 cacheable["Date"].max(),
                 name=cached_name,
+                inception_date=cached_inception,
             )
         else:
             # No gaps — load CSV directly for the return value.
             merged = pd.read_csv(cache_path, parse_dates=["Date"])
             merged["Date"] = pd.to_datetime(merged["Date"]).dt.tz_localize(None)
-            # Fetch and store name if missing from metadata.
-            if cached_name is None:
-                cached_name = _fetch_ticker_name(ticker)
-                print(f"[{ticker}] Fund name: {cached_name}")
+            # Fetch and store name/inception if missing from metadata.
+            if cached_name is None or cached_inception is None:
+                fetched_name, fetched_inception = _fetch_ticker_name(ticker)
+                if cached_name is None:
+                    cached_name = fetched_name
+                    print(f"[{ticker}] Fund name: {cached_name}")
+                if cached_inception is None:
+                    cached_inception = fetched_inception
+                    if cached_inception:
+                        print(f"[{ticker}] Inception date: {cached_inception}")
                 _write_cache_meta(
                     CACHE_META_PATH,
                     ticker,
                     cached_min,
                     cached_max,
                     name=cached_name,
+                    inception_date=cached_inception,
                 )
 
     else:
         # No cache meta (treat as cache miss) — fetch everything up to yesterday
         # and seed the cache files.
         cacheable_end_str = cacheable_end.strftime("%Y-%m-%d")
-        fetch_start = start_date or None
+        seed_name, seed_inception = _fetch_ticker_name(ticker)
+        print(f"[{ticker}] Fund name: {seed_name}")
+        if seed_inception:
+            print(f"[{ticker}] Inception date: {seed_inception}")
+        # Use inception date as the earliest possible fetch start when available.
+        fetch_start = seed_inception or start_date or None
         print(
             f"[{ticker}] No cache found. Fetching {fetch_start} -> {cacheable_end_str}"
         )
@@ -173,11 +193,9 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
         )
         os.makedirs(CACHE_DIR, exist_ok=True)
         _save_cache(merged, cache_path)
-        seed_name = _fetch_ticker_name(ticker)
-        print(f"[{ticker}] Fund name: {seed_name}")
         _write_cache_meta(
             CACHE_META_PATH, ticker, merged["Date"].min(), merged["Date"].max(),
-            name=seed_name,
+            name=seed_name, inception_date=seed_inception,
         )
 
     # ------------------------------------------------------------------ #
@@ -207,7 +225,7 @@ def _load_yfinance_data(data_source: dict, config: dict) -> pd.DataFrame:
 
 def _read_cache_meta(
     meta_path: str, ticker: str
-) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+) -> tuple[pd.Timestamp, pd.Timestamp, str | None, str | None] | None:
     """Read a ticker's cached date-range from the shared metadata YAML file.
 
     Args:
@@ -215,7 +233,9 @@ def _read_cache_meta(
         ticker: Ticker symbol whose entry to look up.
 
     Returns:
-        Tuple of (min_date, max_date) as pd.Timestamp, or None if the file
+        Tuple of (min_date, max_date, name, inception_date) where min_date and
+        max_date are pd.Timestamps, name is the fund name or None, and
+        inception_date is an ISO date string or None.  Returns None if the file
         does not exist, the ticker has no entry, or the entry cannot be parsed.
     """
     if not os.path.exists(meta_path):
@@ -229,7 +249,8 @@ def _read_cache_meta(
         min_date = pd.Timestamp(entry["min_date"])
         max_date = pd.Timestamp(entry["max_date"])
         name: str | None = entry.get("name") or None
-        return min_date, max_date, name
+        inception_date: str | None = entry.get("inception_date") or None
+        return min_date, max_date, name, inception_date
     except Exception:
         return None
 
@@ -240,12 +261,13 @@ def _write_cache_meta(
     min_date: pd.Timestamp,
     max_date: pd.Timestamp,
     name: str | None = None,
+    inception_date: str | None = None,
 ) -> None:
     """Update a ticker's date-range entry in the shared metadata YAML file.
 
     Reads the existing file (if any), updates only the entry for ``ticker``,
-    and writes the file back. If ``name`` is None, any previously stored name
-    is preserved.
+    and writes the file back. If ``name`` or ``inception_date`` are None, any
+    previously stored values are preserved.
 
     Args:
         meta_path: Path to the shared YAML metadata file (``nav_meta.yaml``).
@@ -254,6 +276,8 @@ def _write_cache_meta(
         max_date: Latest date present in the ticker's cache CSV.
         name: Human-readable fund/ETF name to cache alongside the dates. When
             None, the existing stored name (if any) is kept unchanged.
+        inception_date: Fund inception date as ISO string (YYYY-MM-DD). When
+            None, the existing stored value (if any) is kept unchanged.
     """
     os.makedirs(os.path.dirname(meta_path), exist_ok=True)
     if os.path.exists(meta_path):
@@ -266,27 +290,40 @@ def _write_cache_meta(
         "min_date": min_date.strftime("%Y-%m-%d"),
         "max_date": max_date.strftime("%Y-%m-%d"),
         "name": name if name is not None else existing_entry.get("name"),
+        "inception_date": (
+            inception_date if inception_date is not None
+            else existing_entry.get("inception_date")
+        ),
     }
     all_meta[ticker] = new_entry
     with open(meta_path, "w") as fh:
         yaml.dump(all_meta, fh, default_flow_style=False)
 
 
-def _fetch_ticker_name(ticker: str) -> str:
-    """Fetch the human-readable fund/ETF name from Yahoo Finance.
+def _fetch_ticker_name(ticker: str) -> tuple[str, str | None]:
+    """Fetch the human-readable fund/ETF name and inception date from Yahoo Finance.
 
     Args:
         ticker: Yahoo Finance ticker symbol.
 
     Returns:
-        The ``longName`` or ``shortName`` from yfinance info, or the ticker
-        symbol itself when the info call fails or the fields are absent.
+        Tuple of (name, inception_date) where name is the ``longName`` or
+        ``shortName`` from yfinance info (falling back to the ticker symbol),
+        and inception_date is an ISO date string (YYYY-MM-DD) derived from the
+        ``inceptionDate`` Unix timestamp field, or None when absent.
     """
     try:
         info = yf.Ticker(ticker).info
-        return info.get("longName") or info.get("shortName") or ticker
+        name: str = info.get("longName") or info.get("shortName") or ticker
+        raw_inception = info.get("inceptionDate")
+        inception_date: str | None = None
+        if raw_inception is not None:
+            inception_date = datetime.fromtimestamp(
+                int(raw_inception), tz=timezone.utc
+            ).strftime("%Y-%m-%d")
+        return name, inception_date
     except Exception:
-        return ticker
+        return ticker, None
 
 
 def get_ticker_name(ticker: str) -> str:
@@ -300,7 +337,7 @@ def get_ticker_name(ticker: str) -> str:
     """
     result = _read_cache_meta(CACHE_META_PATH, ticker)
     if result is not None:
-        _min, _max, name = result
+        _min, _max, name, _incep = result
         if name:
             return name
     return ticker

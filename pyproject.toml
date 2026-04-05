@@ -1,6 +1,6 @@
 [project]
 name = "sipcompass"
-version = "0.1.0"
+version = "0.1.1"
 description = "Backtest and compare the best monthly SIP dates for mutual funds and ETFs"
 readme = "README.md"
 license = "MIT"
